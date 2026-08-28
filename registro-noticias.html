@@ -248,21 +248,40 @@ function setCfg(key, val)    { localStorage.setItem(key, val); }
 const DEFAULT_BACKEND_URL = 'https://registro-noticias-backend-186768587736.southamerica-east1.run.app';
 function getBackendUrl() { return getCfg(LS_BACKEND_URL, DEFAULT_BACKEND_URL).replace(/\/+$/, ''); }
 
+// Sesión de Google: el ID token dura ~1h, así que además de guardarlo (para no perder la
+// sesión al recargar) se pide auto_select — mientras la persona siga con sesión de Google
+// abierta en el navegador, la herramienta se re-autentica sola en cada carga, sin mostrar
+// el botón de nuevo (salvo la primera vez, o si cierra sesión de Google del todo).
+const LS_GOOGLE_TOKEN = 'notas_google_token';
 let googleIdToken = null;
 
-function handleGoogleCredential(response) {
-  googleIdToken = response.credential;
-  let email = '';
-  try { email = JSON.parse(atob(response.credential.split('.')[1])).email; } catch {}
-  document.getElementById('google-signin-status').textContent = email
-    ? `Conectado como ${email}`
+function decodeJwt(token) {
+  try { return JSON.parse(atob(token.split('.')[1])); } catch { return null; }
+}
+
+function setSignedIn(token) {
+  googleIdToken = token;
+  setCfg(LS_GOOGLE_TOKEN, token);
+  const claims = decodeJwt(token);
+  document.getElementById('google-signin-status').textContent = claims?.email
+    ? `Conectado como ${claims.email}`
     : 'Sesión iniciada.';
 }
 
+function handleGoogleCredential(response) {
+  setSignedIn(response.credential);
+}
+
 window.addEventListener('load', () => {
+  // Token guardado de una sesión anterior — si no venció, se usa de inmediato sin esperar a Google.
+  const cached = getCfg(LS_GOOGLE_TOKEN);
+  const claims = cached && decodeJwt(cached);
+  if (claims && claims.exp * 1000 > Date.now()) setSignedIn(cached);
+
   if (typeof google === 'undefined' || !google.accounts) return;
-  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential, auto_select: true });
   google.accounts.id.renderButton(document.getElementById('google-signin-btn'), { theme: 'outline', size: 'medium' });
+  google.accounts.id.prompt(); // intenta re-autenticar en silencio si hay sesión de Google activa
 });
 
 function toggleKeyBox(e) {
