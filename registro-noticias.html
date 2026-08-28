@@ -278,10 +278,21 @@ window.addEventListener('load', () => {
   const claims = cached && decodeJwt(cached);
   if (claims && claims.exp * 1000 > Date.now()) setSignedIn(cached);
 
+  // Google bloquea su propio login dentro de un iframe (protección anti-clickjacking) —
+  // si ya no hay sesión válida en caché y estamos embebidos (ej. dentro del hub), el botón
+  // de Google no va a funcionar bien. Mejor avisar y ofrecer abrir la herramienta aparte.
+  const isEmbedded = window.self !== window.top;
+  if (isEmbedded && !googleIdToken) {
+    document.getElementById('google-signin-btn').style.display = 'none';
+    const status = document.getElementById('google-signin-status');
+    status.innerHTML = `El login de Google no funciona embebido en el hub — <a href="registro-noticias.html" target="_blank" rel="noopener">abre esta herramienta en una pestaña nueva</a> para iniciar sesión.`;
+    return;
+  }
+
   if (typeof google === 'undefined' || !google.accounts) return;
   google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential, auto_select: true });
   google.accounts.id.renderButton(document.getElementById('google-signin-btn'), { theme: 'outline', size: 'medium' });
-  google.accounts.id.prompt(); // intenta re-autenticar en silencio si hay sesión de Google activa
+  if (!isEmbedded) google.accounts.id.prompt(); // intenta re-autenticar en silencio si hay sesión de Google activa
 });
 
 function toggleKeyBox(e) {
