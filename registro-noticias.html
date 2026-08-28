@@ -241,7 +241,8 @@ const GOOGLE_CLIENT_ID = '186768587736-b5c8eot9epm1n0k3icrch54urq6qmlph.apps.goo
 const LS_BACKEND_URL = 'notas_backend_url';
 function getCfg(key, def='') { return localStorage.getItem(key) || def; }
 function setCfg(key, val)    { localStorage.setItem(key, val); }
-function getBackendUrl() { return getCfg(LS_BACKEND_URL).replace(/\/+$/, ''); }
+const DEFAULT_BACKEND_URL = 'https://registro-noticias-backend-186768587736.southamerica-east1.run.app';
+function getBackendUrl() { return getCfg(LS_BACKEND_URL, DEFAULT_BACKEND_URL).replace(/\/+$/, ''); }
 
 let googleIdToken = null;
 
