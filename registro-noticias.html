@@ -4,6 +4,7 @@
 <title>Registro de Noticias · Parla</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 
 <style>
 :root {
@@ -98,6 +99,7 @@ body {
 }
 .key-box label { display: block; }
 .key-box .btn { padding: 6px 10px; font-size: 12px; }
+.google-signin-box { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 #f-file { font-size: 12px; }
 .extract-status { font-size: 12px; color: var(--mut); min-height: 16px; }
 .extract-status.ok  { color: #2E7D32; }
@@ -151,16 +153,18 @@ body {
       <div class="upload-box">
         <div class="upload-head">
           <span>📄 Crear noticia a partir de archivo</span>
-          <a href="#" class="cfg-link" onclick="toggleKeyBox(event)">⚙ Configuración</a>
+          <a href="#" class="cfg-link" onclick="toggleKeyBox(event)">⚙ Backend</a>
         </div>
         <div id="key-box" class="key-box" style="display:none">
           <div class="field" style="flex:1">
             <label for="f-backend-url" style="font-size:10px">URL del backend</label>
             <input id="f-backend-url" type="text" placeholder="https://...run.app">
-            <label for="f-team-code" style="font-size:10px;margin-top:6px">Código de acceso de equipo</label>
-            <input id="f-team-code" type="password" placeholder="código compartido por tu equipo">
             <button class="btn btn-secondary" style="margin-top:6px" onclick="saveBackendCfg()">Guardar</button>
           </div>
+        </div>
+        <div class="google-signin-box">
+          <div id="google-signin-btn"></div>
+          <div class="field-hint" id="google-signin-status">Inicia sesión con tu cuenta @parla.cl para extraer o publicar.</div>
         </div>
         <input id="f-file" type="file" accept="image/png,image/jpeg,image/webp,application/pdf">
         <button class="btn btn-secondary" onclick="extractFromFile()" id="btn-extract">✨ Extraer con IA</button>
@@ -231,28 +235,41 @@ const PARLA_SVG = `<svg viewBox="0 0 2000 1484.66" xmlns="http://www.w3.org/2000
 
 // ── Extracción con IA y publicación — vía el backend compartido del equipo ──
 // (notes-backend/, desplegado en Cloud Run — no requiere nada corriendo en tu Mac).
+// El acceso se valida con Google Sign-In restringido a cuentas @parla.cl — el backend
+// verifica el token, acá solo se decodifica para mostrar el email (no es una validación real).
+const GOOGLE_CLIENT_ID = '186768587736-b5c8eot9epm1n0k3icrch54urq6qmlph.apps.googleusercontent.com';
 const LS_BACKEND_URL = 'notas_backend_url';
-const LS_TEAM_CODE   = 'notas_team_code';
 function getCfg(key, def='') { return localStorage.getItem(key) || def; }
 function setCfg(key, val)    { localStorage.setItem(key, val); }
 function getBackendUrl() { return getCfg(LS_BACKEND_URL).replace(/\/+$/, ''); }
-function getTeamCode()   { return getCfg(LS_TEAM_CODE); }
+
+let googleIdToken = null;
+
+function handleGoogleCredential(response) {
+  googleIdToken = response.credential;
+  let email = '';
+  try { email = JSON.parse(atob(response.credential.split('.')[1])).email; } catch {}
+  document.getElementById('google-signin-status').textContent = email
+    ? `Conectado como ${email}`
+    : 'Sesión iniciada.';
+}
+
+window.addEventListener('load', () => {
+  if (typeof google === 'undefined' || !google.accounts) return;
+  google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
+  google.accounts.id.renderButton(document.getElementById('google-signin-btn'), { theme: 'outline', size: 'medium' });
+});
 
 function toggleKeyBox(e) {
   e.preventDefault();
   const box = document.getElementById('key-box');
   const visible = box.style.display !== 'none';
   box.style.display = visible ? 'none' : 'flex';
-  if (!visible) {
-    document.getElementById('f-backend-url').value = getCfg(LS_BACKEND_URL);
-    document.getElementById('f-team-code').value    = getCfg(LS_TEAM_CODE);
-  }
+  if (!visible) document.getElementById('f-backend-url').value = getCfg(LS_BACKEND_URL);
 }
 function saveBackendCfg() {
-  const url  = document.getElementById('f-backend-url').value.trim();
-  const code = document.getElementById('f-team-code').value.trim();
+  const url = document.getElementById('f-backend-url').value.trim();
   if (url) setCfg(LS_BACKEND_URL, url); else localStorage.removeItem(LS_BACKEND_URL);
-  if (code) setCfg(LS_TEAM_CODE, code); else localStorage.removeItem(LS_TEAM_CODE);
   document.getElementById('key-box').style.display = 'none';
 }
 
@@ -270,9 +287,14 @@ async function extractFromFile() {
   const btn    = document.getElementById('btn-extract');
   const file   = document.getElementById('f-file').files[0];
   if (!file) { status.className = 'extract-status err'; status.textContent = 'Elige una imagen o PDF primero.'; return; }
-  if (!getBackendUrl() || !getTeamCode()) {
+  if (!getBackendUrl()) {
     status.className = 'extract-status err';
-    status.textContent = 'Configura la URL del backend y el código de equipo (⚙ arriba) primero.';
+    status.textContent = 'Configura la URL del backend (⚙ arriba) primero.';
+    return;
+  }
+  if (!googleIdToken) {
+    status.className = 'extract-status err';
+    status.textContent = 'Inicia sesión con tu cuenta @parla.cl primero.';
     return;
   }
 
@@ -302,7 +324,7 @@ No inventes datos que no estén en el archivo. Si algún campo no es identificab
     status.textContent = 'Extrayendo con Claude…';
     const resp = await fetch(getBackendUrl() + '/api/claude', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Team-Code': getTeamCode() },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + googleIdToken },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
         max_tokens: 4096,
@@ -543,20 +565,25 @@ async function publishNote() {
   const slug = document.getElementById('f-slug').value.trim() || slugify(data.titulo);
   const html = buildNoteHtml(data, true);
 
+  if (!getBackendUrl()) {
+    status.className = 'publish-status err';
+    status.textContent = 'Configura la URL del backend (⚙ arriba) primero.';
+    return;
+  }
+  if (!googleIdToken) {
+    status.className = 'publish-status err';
+    status.textContent = 'Inicia sesión con tu cuenta @parla.cl primero.';
+    return;
+  }
+
   btn.disabled = true;
   status.className = 'publish-status';
   status.textContent = 'Publicando…';
 
-  if (!getBackendUrl() || !getTeamCode()) {
-    status.className = 'publish-status err';
-    status.textContent = 'Configura la URL del backend y el código de equipo (⚙ arriba) primero.';
-    return;
-  }
-
   try {
     const resp = await fetch(getBackendUrl() + '/api/publish-note', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Team-Code': getTeamCode() },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + googleIdToken },
       body: JSON.stringify({ filename: `${slug}.html`, html }),
     });
     const respData = await resp.json();
